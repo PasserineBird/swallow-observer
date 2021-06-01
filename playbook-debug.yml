@@ -1,0 +1,118 @@
+---
+- hosts: all
+  gather_facts: no
+  tasks:
+  - name: get the username running the deploy
+    become: false
+    local_action: command whoami
+    register: username_on_the_host
+
+  - name: set facts to bypass ssh connection
+    set_fact:
+      ansible_ssh_host: 127.0.0.1
+      ansible_user: "{{username_on_the_host.stdout}}"
+
+  - name: Gather Facts with new facts set.
+    setup:
+
+  - name: Make result folder
+    file: path={{playbook_dir}}/results state=directory
+    run_once: yes
+  
+  # Host vars
+  - name: Make host_vars folder for each node
+    file: path={{playbook_dir}}/results/{{inventory_hostname}}/host_vars state=directory
+
+  - name: Use host_vars files as template
+    template: 
+      src: "{{ item }}"
+      dest: "{{playbook_dir}}/results/{{inventory_hostname}}/host_vars/{{ item | basename }}"
+    loop: "{{ lookup('fileglob', 'host_vars/'+inventory_hostname+'/*', wantlist=True) }}"
+
+
+  # Group vars (and subgroups)
+  - set_fact:
+      subgroups: "{{ subgroups|default([]) + group_names }}"
+    loop: "{{ group_names }}"
+
+  - name: Make result folder for groups
+    file: path={{playbook_dir}}/results/{{inventory_hostname}}/group_vars/{{ item }} state=directory
+    loop: "{{ subgroups }}"
+
+  - name: Find group_vars sub directories
+    find:
+      paths: "{{ playbook_dir }}/group_vars/{{ item }}/"
+      file_type: directory
+      recurse: Yes
+    register: found_dirs
+    loop: "{{ subgroups }}"
+
+  - name: set var for dir list
+    set_fact: 
+      found_dir_merged: []
+
+  - name: Flatten dir lists
+    set_fact: 
+      found_dir_merged: "{{ found_dir_merged + item.files }}"
+    loop: "{{found_dirs.results}}"
+  
+  - name: Create found directories
+    file: path={{ item.path | regex_replace('^.*'+playbook_dir+'/(.+)$', playbook_dir+'/results/'+inventory_hostname+'/\\1') }} state=directory
+    loop: "{{ found_dir_merged }}"
+
+  - name: Find group_vars files
+    find:
+      paths: "{{ playbook_dir }}/group_vars/{{ item }}/"
+      file_type: file
+      recurse: Yes
+      patterns: "*.yml"
+    register: found_files
+    loop: "{{ subgroups }}"
+  
+  - name: set var for file list
+    set_fact: 
+      found_files_merged: []
+
+  - name: Flatten file lists
+    set_fact: 
+      found_files_merged: "{{ found_files_merged + item.files }}"
+    loop: "{{found_files.results}}"
+    
+  - name: Use group_vars files as template
+    template: 
+      src: "{{ item.path }}"
+      dest: "{{ item.path | regex_replace('^.*'+playbook_dir+'/(.+)$', playbook_dir+'/results/'+inventory_hostname+'/\\1') }}"
+    loop: "{{ found_files_merged }}"
+
+
+  # All vars 
+  - name: Create group_vars/all folder for each node
+    file: path={{playbook_dir}}/results/{{inventory_hostname}}/group_vars/all state=directory
+
+  - name: Find group_vars/all sub directories
+    find:
+      paths: "{{ playbook_dir }}/group_vars/all/"
+      file_type: directory
+      recurse: Yes
+    register: found_dirs_all
+
+  #- debug:
+  #    var: found_dirs_all
+
+  - name: Create found directories
+    file: path={{ item.path | regex_replace('^.*'+playbook_dir+'/(.+)$', playbook_dir+'/results/'+inventory_hostname+'/\\1') }} state=directory
+    loop: "{{ found_dirs_all.files }}"
+
+  - name: Find group_vars/all files
+    find:
+      paths: "{{ playbook_dir }}/group_vars/all/"
+      file_type: file
+      recurse: Yes
+      patterns: "*.yml"
+    register: found_files_all
+  
+  - name: Use group_vars/all files as template
+    template: 
+      src: "{{ item.path }}"
+      dest: "{{ item.path | regex_replace('^.*'+playbook_dir+'/(.+)$', playbook_dir+'/results/'+inventory_hostname+'/\\1') }}"
+    loop: "{{ found_files_all.files }}"
